@@ -1,0 +1,17 @@
+# Rust / Cargo
+/target
+Cargo.lock
+
+# Blender
+*.blend1
+*.blend2
+/renders/
+
+# Generated 3D Files (Too big for GitHub)
+*.obj
+*.ply
+*.stl
+
+# Windows
+Thumbs.db
+.DS_Store

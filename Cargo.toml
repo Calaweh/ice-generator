@@ -1,0 +1,8 @@
+[package]
+name = "ice_generator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+glam = "0.24"   # Fast 3D math (vectors, matrices)
+noise = "0.8"   # Perlin and Simplex noise for the ice texture
