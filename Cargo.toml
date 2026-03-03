@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 glam = "0.24"   # Fast 3D math (vectors, matrices)
 noise = "0.8"   # Perlin and Simplex noise for the ice texture
+mcubes = "0.1" 
+rand = "0.8"
+rayon = "1.8"
