@@ -3,6 +3,7 @@
 Cargo.lock
 
 # Blender
+*.blend
 *.blend1
 *.blend2
 /renders/

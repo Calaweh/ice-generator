@@ -7,8 +7,8 @@ use std::io::Write;
 // --- TOOL SETTINGS ---
 const RESOLUTION: usize = 128; // Grid density. 128^3 = ~2 million voxels.
 const MOLD_DIM: f32 = 1.0;     // The boundary (-1.0 to 1.0)
-const CAVE_SIZE: f64 = 2.2;    // Scale of internal air pockets
-const AIR_THRESHOLD: f32 = 0.2; // Higher = more air holes, Lower = more solid ice
+const CAVE_SIZE: f64 = 1.2;    // Scale of internal air pockets
+const AIR_THRESHOLD: f32 = 0.05; // Higher = more air holes, Lower = more solid ice
 
 fn main() -> std::io::Result<()> {
     let mut rng = rand::thread_rng();
