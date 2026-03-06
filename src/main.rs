@@ -1,82 +1,152 @@
 use glam::Vec3;
-use noise::{NoiseFn, Perlin};
 use rand::Rng;
 use std::fs::File;
 use std::io::Write;
 
-// --- TOOL SETTINGS ---
-const RESOLUTION: usize = 128; // Grid density. 128^3 = ~2 million voxels.
-const MOLD_DIM: f32 = 1.0;     // The boundary (-1.0 to 1.0)
-const CAVE_SIZE: f64 = 1.2;    // Scale of internal air pockets
-const AIR_THRESHOLD: f32 = 0.05; // Higher = more air holes, Lower = more solid ice
+struct Plane {
+    normal: Vec3,
+    distance: f32,
+}
 
-fn main() -> std::io::Result<()> {
-    let mut rng = rand::thread_rng();
-    let perlin = Perlin::new(1337);
-    let mut particles = Vec::new();
+struct Mold {
+    planes: Vec<Plane>,
+}
 
-    println!("🧊 Simulating Volumetric Ice Growth with Internal Air Voids...");
+impl Mold {
+    fn new(planes: Vec<Plane>) -> Self {
+        Self { planes }
+    }
 
-    // 1. Iterate through the entire 3D VOLUME
-    for z in 0..RESOLUTION {
-        for y in 0..RESOLUTION {
-            for x in 0..RESOLUTION {
-                // Map grid (0..RES) to coordinates (-1.0 .. 1.0)
-                let p = Vec3::new(
-                    (x as f32 / RESOLUTION as f32) * 2.0 - 1.0,
-                    (y as f32 / RESOLUTION as f32) * 2.0 - 1.0,
-                    (z as f32 / RESOLUTION as f32) * 2.0 - 1.0,
-                );
-
-                // 2. NUCLEATION LOGIC (Noise-based Freezing)
-                let noise_val = perlin.get([
-                    p.x as f64 * CAVE_SIZE,
-                    p.y as f64 * CAVE_SIZE,
-                    p.z as f64 * CAVE_SIZE,
-                ]) as f32;
-
-                // Only create ice where noise is above threshold
-                // This creates the "Natural Voids" (Air Holes) inside the block
-                if noise_val > AIR_THRESHOLD {
-                    
-                    // 3. STOCHASTIC JITTER (Micro-Texture)
-                    // We offset the point slightly so they aren't a perfect grid.
-                    // This creates the "uneven tiny dense particles" in Blender.
-                    let jitter = Vec3::new(
-                        rng.gen_range(-0.4..0.4),
-                        rng.gen_range(-0.4..0.4),
-                        rng.gen_range(-0.4..0.4),
-                    ) * (2.0 / RESOLUTION as f32);
-
-                    let mut final_pos = p + jitter;
-
-                    // 4. THE MOLD BOUNDARY (Even Surface)
-                    // Clamp ensures we "hit" the glass wall and flatten out perfectly.
-                    final_pos.x = final_pos.x.clamp(-MOLD_DIM, MOLD_DIM);
-                    final_pos.y = final_pos.y.clamp(-MOLD_DIM, MOLD_DIM);
-                    final_pos.z = final_pos.z.clamp(-MOLD_DIM, MOLD_DIM);
-
-                    // OPTIMIZATION: 
-                    // We only save particles near the surface OR near an air-pocket.
-                    // This keeps the file size manageable while keeping the "refraction walls."
-                    if noise_val < AIR_THRESHOLD + 0.1 || final_pos.x.abs() > 0.98 || final_pos.y.abs() > 0.98 || final_pos.z.abs() > 0.98 {
-                         particles.push(final_pos);
-                    }
+    fn constrain(&self, pos: &mut Vec3, radius: f32) {
+        for _ in 0..3 {
+            for plane in &self.planes {
+                let dist = pos.dot(plane.normal) - plane.distance;
+                if dist > -radius {
+                    let penetration = dist + radius;
+                    *pos -= plane.normal * penetration;
                 }
             }
         }
     }
+}
 
-    // 5. EXPORT (Fixed Ownership)
-    let mut file = File::create("abeto_volume_ice.obj")?;
-    
-    // We use '&particles' here so we only BORROW the vector
-    for p in &particles {
-        // Multiply by 10 for Blender scale
-        writeln!(file, "v {} {} {}", p.x * 10.0, p.y * 10.0, p.z * 10.0)?;
+struct Particle {
+    pos: Vec3,
+    radius: f32,
+}
+
+struct IceSimulation {
+    particles: Vec<Particle>,
+    mold: Mold,
+}
+
+impl IceSimulation {
+    fn new(mold: Mold) -> Self {
+        Self {
+            particles: Vec::new(),
+            mold,
+        }
     }
 
-    println!("✅ Done! Generated {} points.", particles.len());
-    println!("👉 Import 'abeto_volume_ice.obj' into Blender.");
-    Ok(())
+    fn grow_particles(&mut self, count: usize) {
+        let mut rng = rand::thread_rng();
+        for _ in 0..count {
+            // NEW: Spawn along a vertical "spine" instead of a single point.
+            // This helps fill the tall, pointy shard shape much better.
+            let vertical_offset = rng.gen_range(-1.0..1.0); 
+            
+            let spawn_pos = Vec3::new(
+                rng.gen_range(-0.1..0.1),
+                vertical_offset, // Spread out up and down
+                rng.gen_range(-0.1..0.1),
+            );
+            
+            // Change it to this:
+let radius = rng.gen_range(0.02..0.06);
+            
+            self.particles.push(Particle {
+                pos: spawn_pos,
+                radius,
+            });
+        }
+    }
+
+    fn resolve_pressure(&mut self) {
+        let num_particles = self.particles.len();
+        let relaxation_steps = 3;
+
+        for _ in 0..relaxation_steps {
+            for i in 0..num_particles {
+                for j in (i + 1)..num_particles {
+                    let dir = self.particles[i].pos - self.particles[j].pos;
+                    let dist_sq = dir.length_squared();
+                    let min_dist = self.particles[i].radius + self.particles[j].radius;
+
+                    if dist_sq < min_dist * min_dist && dist_sq > 0.00001 {
+                        let dist = dist_sq.sqrt();
+                        let overlap = min_dist - dist;
+                        let push_dir = dir / dist;
+                        let push_vector = push_dir * (overlap * 0.5);
+                        
+                        self.particles[i].pos += push_vector;
+                        self.particles[j].pos -= push_vector;
+                    }
+                }
+            }
+
+            for particle in &mut self.particles {
+                self.mold.constrain(&mut particle.pos, particle.radius);
+            }
+        }
+    }
+
+    fn export_frame_to_obj(&self, frame_number: usize) {
+        let filename = format!("frame_{:04}.obj", frame_number);
+        let mut file = File::create(&filename).expect("Unable to create file");
+
+        for particle in &self.particles {
+            writeln!(file, "v {} {} {}", particle.pos.x, particle.pos.y, particle.pos.z)
+                .expect("Unable to write data");
+        }
+        println!("Exported {} with {} particles", filename, self.particles.len());
+    }
+}
+
+fn main() {
+    let mut planes = Vec::new();
+
+    // 1. Thickness (Make it a relatively thin slab like the reference)
+    planes.push(Plane { normal: Vec3::new(0.0, 0.0, 1.0).normalize(), distance: 0.6 });
+    planes.push(Plane { normal: Vec3::new(0.0, 0.0, -1.0).normalize(), distance: 0.6 });
+
+    // 2. Main Width Limits
+    planes.push(Plane { normal: Vec3::new(-1.0, 0.0, 0.0).normalize(), distance: 1.1 });
+    planes.push(Plane { normal: Vec3::new(1.0, 0.0, 0.0).normalize(), distance: 1.1 });
+
+    // 3. Top Profile (Slanted heavily down to the left)
+    planes.push(Plane { normal: Vec3::new(-0.4, 1.0, 0.0).normalize(), distance: 1.6 }); 
+    planes.push(Plane { normal: Vec3::new(0.6, 1.0, 0.0).normalize(), distance: 1.8 }); // Snip the top right corner
+
+    // 4. Bottom Profile (Tapered into an asymmetrical jagged point pointing down-right)
+    planes.push(Plane { normal: Vec3::new(-1.0, -1.0, 0.0).normalize(), distance: 1.3 }); // Steep slope bottom left
+    planes.push(Plane { normal: Vec3::new(0.8, -1.2, 0.0).normalize(), distance: 1.2 }); // Sharp cut bottom right
+
+    // 5. Faceted 3D corners (These "carve" the block so it isn't just a flat extrusion)
+    planes.push(Plane { normal: Vec3::new(-0.8, -0.8, 0.6).normalize(), distance: 1.1 }); // Bottom left front chip
+    planes.push(Plane { normal: Vec3::new(0.8, 0.8, 0.6).normalize(), distance: 1.3 }); // Top right front chip
+    planes.push(Plane { normal: Vec3::new(0.6, -0.8, -0.6).normalize(), distance: 1.1 }); // Bottom right back chip
+    planes.push(Plane { normal: Vec3::new(-0.6, 0.8, -0.6).normalize(), distance: 1.3 }); // Top left back chip
+
+    let mold = Mold::new(planes);
+    let mut sim = IceSimulation::new(mold);
+
+    // Change it to this:
+let total_frames = 150;
+let growth_per_frame = 150;
+
+    for frame in 0..total_frames {
+        sim.grow_particles(growth_per_frame);
+        sim.resolve_pressure();
+        sim.export_frame_to_obj(frame);
+    }
 }

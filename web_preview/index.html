@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Abeto Ice Preview</title>
+    <style>
+        body { 
+            margin: 0; 
+            /* The "Igloo Inc" moody dark background */
+            background: radial-gradient(circle, #838996 0%, #2a2d35 100%); 
+            overflow: hidden; 
+        }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'; // <--- NEW: Built-in lighting
+
+        // 1. SCENE SETUP
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 0, 5); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+        renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ReinhardToneMapping;
+renderer.toneMappingExposure = 2.0; // Higher exposure helps clear glass show up
+        renderer.setClearColor(0x000000, 0); 
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // 2. BULLETPROOF LIGHTING ENVIRONMENT
+        // This guarantees the glass has a beautiful studio environment to reflect, 
+        // without relying on external downloads that might get blocked by your browser.
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+
+        // 3. POST-PROCESSING (Chromatic Aberration)
+        const composer = new EffectComposer(renderer);
+        composer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); 
+        composer.addPass(new RenderPass(scene, camera));
+
+        const RGBShiftShader = {
+            uniforms: {
+                "tDiffuse": { value: null },
+                "amount":   { value: 0.0005 } 
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+                }`,
+            fragmentShader: `
+                uniform sampler2D tDiffuse;
+                uniform float amount;
+                varying vec2 vUv;
+                void main() {
+                    vec4 cr = texture2D(tDiffuse, vUv + vec2(amount, 0.0));
+                    vec4 cga = texture2D(tDiffuse, vUv);
+                    vec4 cb = texture2D(tDiffuse, vUv - vec2(amount, 0.0));
+                    gl_FragColor = vec4(cr.r, cga.g, cb.b, cga.a);
+                }`
+        };
+        composer.addPass(new ShaderPass(RGBShiftShader));
+
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // Softens the shadows
+        scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0xadd8e6, 20); // Pale blue light
+pointLight.position.set(0, 0, 0);
+scene.add(pointLight);
+
+// Add a high-intensity PointLight
+const light = new THREE.PointLight(0xffffff, 500); 
+light.position.set(5, 5, 5);
+scene.add(light);
+
+        // 4. LOAD MODEL (Normal Map is temporarily disabled to prove the glass works)
+        const modelGroup = new THREE.Group();
+        scene.add(modelGroup);
+
+        const textureLoader = new THREE.TextureLoader();
+        const normalMap = textureLoader.load('ice_normal_web3.png'); // Ensure this file is in the same folder
+        normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
+        normalMap.flipY = false; // Important: Blender exports often need this flipped
+        normalMap.minFilter = THREE.LinearMipMapLinearFilter; // Fixes flickering at a distance
+normalMap.magFilter = THREE.LinearFilter;
+normalMap.anisotropy = renderer.capabilities.getMaxAnisotropy(); // Fixes "fuzziness" at angles
+
+        const loader = new GLTFLoader();
+        loader.load('TA_Asset_Library_v1.3.glb', (gltf) => {
+            const model = gltf.scene;
+
+            // Perfect Centering
+            const box = new THREE.Box3().setFromObject(model);
+            const center = box.getCenter(new THREE.Vector3());
+            const size = box.getSize(new THREE.Vector3()).length();
+
+            model.position.sub(center); 
+            modelGroup.scale.setScalar(3.0 / size);
+
+            // THE CRYSTAL CLEAR "IGLOO INC" MATERIAL
+            const iceMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,           // White base
+    metalness: 0.0,
+    roughness: 0.1,            // Shiny
+    transmission: 1.0,         // THE KEY: 100% see-through
+    thickness: 1.0,            // Gives the ice depth
+    ior: 1.31,                 // Real ice IOR
+    
+    // Normal map detail
+    normalMap: normalMap,
+    normalScale: new THREE.Vector2(0.05, 0.05), // Subtle pitting
+    
+    // The "Frosted" look
+    clearcoat: 1.0,            // Wet skin
+    clearcoatRoughness: 0.03,  
+    
+    envMapIntensity: 2.0,      // Reflect the surroundings
+    transparent: false         // MeshPhysicalMaterial handles transmission automatically
+});
+
+            // Apply material
+            model.traverse((child) => {
+                if (child.isMesh) {
+                    console.log("Found mesh:", child.name); // Check console to see if it finds your ice
+                    child.material = iceMaterial;
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                }
+            });
+
+            modelGroup.add(model);
+        });
+
+        // 5. ANIMATION LOOP
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update(); 
+            
+            modelGroup.rotation.y += 0.002;
+            modelGroup.rotation.x += 0.001;
+
+            composer.render(); 
+        }
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>

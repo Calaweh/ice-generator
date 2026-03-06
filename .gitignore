@@ -11,6 +11,8 @@ Cargo.lock
 # Generated 3D Files (Too big for GitHub)
 *.obj
 *.ply
+*.glb
+*.png
 *.stl
 
 # Windows
