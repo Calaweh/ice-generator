@@ -9,3 +9,5 @@ noise = "0.8"   # Perlin and Simplex noise for the ice texture
 mcubes = "0.1" 
 rand = "0.8"
 rayon = "1.8"
+macroquad = "0.4"
+clap = { version = "4.4", features = ["derive"] }
